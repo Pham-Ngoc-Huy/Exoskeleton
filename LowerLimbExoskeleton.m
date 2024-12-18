@@ -1,142 +1,197 @@
 classdef LowerLimbExoskeleton
     properties
+        % Tunning parameter for q and qd
+        A1 = 0.02;
+        A2 = 0.03;
+        B1 = 1;
+        f1;
+        f2;
+
         % Parameters for Exoskeleton System
-        M = 0.0312;   % Inertia (kg·m^2)
-        B = 0.000317; % Actuator damping (kg·m^2)
-        K = 635;      % Stiffness of SEA (N·m)
-        Cd = 50;      % Desired damping
-        Kd = 200;     % Desired stiffness
+        I2= eye(2); 
+        B = 3.17*10^-4; 
+        K = 635;      
+        s = 0.001;
+        C_q_dot_q = 0;
+        M_q = 3.12*10^-2
+        Cd;
+        Kd;
 
         % Impedance Control Parameters
-        lambda1 = 1.5;
-        lambda2 = 1.0;
-        chi1 = 0.1;
-        chi2 = 1.0;
- 
+        lambda1 = 1;
+        lambda2 = 1;
+        chi1 = 10;
+        chi2 = 12;
+        k_g = 0.001;
+
         % Control gains and other parameters
-        L_q_qdot = 0.5;
-        Kz = 10;
-        k_q = 5;
-        Kv = 50;
-        M_q;
-        g_q = 0;
-        p_qdot_q = 0;
-        
+        Kz;
+        Kv;
+        g_q;
+
         % Simulation parameters
-        T = 10;
-        dt = 0.01;
+        T = 30;
+        dt = 0.1;
         time;
         numSteps;
-        
+
         % State variables
         q;
+        z;
         q_dot;
-        tau_e = 0;
+        torque_e;
         qd;
         qd_dot;
-        z;
-        sgn;
-        anomaly_score;
-        y;
-        ydot;
+        qr_dot;
+        Ca;
+        Ka;
+        t_head_e;
+        p_q_dot_q;
         us;
-        uf;
-        u;
+        sgn;
+        qr_dot_dot;
+        w_s;
+        q_dot_dot;
+        qd_dot_dot;
+
     end
-    
+
     methods
         function obj = LowerLimbExoskeleton()
-            % Initialize time and state variables
+            obj.f1 = rand(1);
+            obj.f2 = rand(1);
             obj.time = 0:obj.dt:obj.T;
             obj.numSteps = length(obj.time);
-            obj.q = zeros(1, obj.numSteps);
-            obj.q_dot = zeros(1, obj.numSteps);
-            obj.qd = sin(0.5 * obj.time);
-            obj.qd_dot = 0.5 * cos(0.5 * obj.time);
-            obj.z = zeros(1, obj.numSteps);
-            obj.sgn = zeros(1, obj.numSteps);
-            obj.anomaly_score = 0.5 * (1 + sin(0.3 * obj.time));
-            obj.y = zeros(1, obj.numSteps);
-            obj.ydot = zeros(1, obj.numSteps);
-            obj.us = zeros(1, obj.numSteps);
-            obj.uf = zeros(1, obj.numSteps);
-            obj.u = zeros(1, obj.numSteps);
-            obj.M_q = obj.M;
+            obj.q = [(obj.A1 * sin(obj.B1 * obj.time + obj.f1)); 
+                     (obj.A1 * sin(obj.B1 * obj.time + obj.f1 + (pi / 2)))];
+
+            obj.q_dot = [(obj.A1*obj.B1*cos(obj.B1*obj.time+ obj.f1));
+                        (obj.A1*obj.B1*cos(obj.B1*obj.time+ obj.f1+ (pi/2)))];
+            
+            obj.q_dot_dot = [(-obj.A1*obj.B1*obj.B1*sin(obj.B1*obj.time+ obj.f1));
+                             (-obj.A1*obj.B1*obj.B1*sin(obj.B1*obj.time+ obj.f1 +(pi/2)))];
+
+            obj.qd = [(obj.A2*sin(obj.B1*obj.time + obj.f2));
+                    (obj.A2*sin(obj.B1*obj.time + obj.f2 + (pi/2)))];
+
+            obj.qd_dot = [(obj.A2*obj.B1*cos(obj.B1*obj.time + obj.f2));
+                          (obj.A2*obj.B1*cos(obj.B1*obj.time + obj.f2 + (pi/2)))];
+            
+            obj.qd_dot_dot = [(-obj.A2*obj.B1*obj.B1*sin(obj.B1*obj.time + obj.f2));
+                                -obj.A2*obj.B1*obj.B1*sin(obj.B1*obj.time + obj.f2 + (pi/2))];
+
+            obj.g_q = 2.2 * sin(obj.q);                   
+            obj.Cd = 15 * obj.I2;                          
+            obj.Kd = 13 * obj.I2;                         
+            obj.Kz = 25 * obj.I2;                          
+            obj.Kv = (10^-3) * obj.I2;
+
+            obj.z = zeros(2, obj.numSteps);
+
+            obj.qr_dot = zeros(2, obj.numSteps);           
+            obj.torque_e = zeros(2, obj.numSteps);         
+            obj.Ka = zeros(2, 2, obj.numSteps);           
+            obj.Ca = zeros(2, 2, obj.numSteps);            
+            obj.sgn = zeros(2, obj.numSteps);              
+            obj.us = zeros(2, obj.numSteps);               
+
+            obj.t_head_e = obj.torque_e;   
         end
-        
+
         function obj = simulate(obj)
-            % Simulation loop
-            for i = 2:obj.numSteps
-                % Calculate weighting function w(s)
-                w_s = obj.lambda1 * tanh((-obj.anomaly_score(i) / obj.chi1) + obj.chi2) + obj.lambda2;
-
-                % Update impedance control values
-                Ca = w_s * obj.Cd;
-                Ka = w_s * obj.Kd;
-
-                % Impedance control output
-                tau_imp = Ca * (obj.q_dot(i-1) - obj.qd_dot(i)) + Ka * (obj.q(i-1) - obj.qd(i));
+            for i = 1:obj.numSteps
                 
-                % System dynamics
-                q_ddot = (tau_imp - obj.tau_e) / obj.M;
+                obj.f1 = rand(1);
+                obj.f2 = rand(1);
                 
-                % Update states
-                obj.q_dot(i) = obj.q_dot(i-1) + q_ddot * obj.dt;
-                obj.q(i) = obj.q(i-1) + obj.q_dot(i) * obj.dt;
+                obj.q = [(obj.A1 * sin(obj.B1 * obj.time + obj.f1)); 
+                     (obj.A1 * sin(obj.B1 * obj.time + obj.f1 + (pi / 2)))];
+
+                obj.q_dot = [(obj.A1*obj.B1*cos(obj.B1*obj.time+ obj.f1));
+                            (obj.A1*obj.B1*cos(obj.B1*obj.time+ obj.f1+ (pi/2)))];
+
+                obj.q_dot_dot = [(-obj.A1*obj.B1*obj.B1*sin(obj.B1*obj.time+ obj.f1));
+                                 (-obj.A1*obj.B1*obj.B1*sin(obj.B1*obj.time+ obj.f1 +(pi/2)))];
+
+                obj.qd = [(obj.A2*sin(obj.B1*obj.time + obj.f2));
+                        (obj.A2*sin(obj.B1*obj.time + obj.f2 + (pi/2)))];
+
+                obj.qd_dot = [(obj.A2*obj.B1*cos(obj.B1*obj.time + obj.f2));
+                              (obj.A2*obj.B1*cos(obj.B1*obj.time + obj.f2 + (pi/2)))];
+
+                obj.qd_dot_dot = [(-obj.A2*obj.B1*obj.B1*sin(obj.B1*obj.time + obj.f2));
+                                    -obj.A2*obj.B1*obj.B1*sin(obj.B1*obj.time + obj.f2 + (pi/2))];
+                                
+                obj.g_q = 2.2 * sin(obj.q);                   
+
+                obj.w_s = obj.lambda1 * tanh((-obj.s / obj.chi1) + obj.chi2) + obj.lambda2;
                 
-                % Calculate impedance deviation
-                obj.z(i) = obj.q_dot(i) - obj.qd_dot(i) + (1 / obj.Cd) * obj.Kd * (obj.q(i) - obj.qd(i)) + obj.tau_e * (1 / obj.Cd) * (1 / w_s);
+                obj.qr_dot_dot = obj.qd_dot_dot - inv(obj.Cd)*obj.Kd*(obj.q_dot-obj.qd_dot) + inv(obj.Cd)*obj.Cd*(obj.q_dot_dot - obj.qd_dot_dot) + obj.Kd*(obj.q_dot-obj.qd_dot);
+
+                % Equation 42
+                obj.Ca(:,:,i) = obj.w_s * obj.Cd;
+                obj.Ka(:,:,i) = obj.w_s * obj.Kd;
                 
-                % Sign function for z
-                obj.sgn(i) = sign(obj.z(i));
+                obj.torque_e(:,i) = obj.w_s*(obj.Cd * (obj.q_dot(:,i) - obj.qd_dot(:,i)) + obj.Kd * (obj.q(:,i) - obj.qd(:,i)));
+
+                % Equation 44
+                obj.qr_dot(:,i) = obj.qd_dot(:,i) - inv(obj.Cd) * obj.Kd * (obj.q(:,i) - obj.qd(:,i)) + ((1/obj.w_s) * inv(obj.Cd) * obj.torque_e(:,i));
+               
+                % Equation 43
+                obj.z(:,i) = obj.q_dot(:,i) - obj.qr_dot(:,i);
+
+                % Equation 56
+                obj.sgn(:, i) = sign(obj.z(:, i));
+
                 
-                % Example term for damping (with position and velocity dependency)
-                C_qdot_q = 0.05 * obj.q_dot(i) * cos(obj.q(i));
-
-                % Derivative of the auxiliary error term
-                obj.ydot(i) = -obj.L_q_qdot * obj.y(i-1) - obj.L_q_qdot * (obj.K * (obj.qd(i) - obj.q(i)) - C_qdot_q * obj.q_dot(i) - obj.g_q + obj.p_qdot_q);
-
-                % Interaction torque estimate
-                t_head_e = obj.y(i) + obj.p_qdot_q;
-
-                % Stabilizing control action
-                obj.us(i) = -obj.Kz * obj.z(i) - t_head_e - obj.k_q * obj.sgn(i) + (obj.M_q + obj.B) * 0 + C_qdot_q * obj.q_dot(i) + obj.g_q;
-
-                % Feedforward control
-                obj.uf(i) = -obj.Kv * (obj.qd_dot(i) - obj.q_dot(i));
-
-                % Total control input
-                obj.u(i) = obj.us(i) + obj.uf(i);
-
-                % Update auxiliary tracking variable
-                obj.y(i) = obj.y(i-1) + obj.ydot(i) * obj.dt;
+                % Equation 55
+                obj.us(:,i) = -obj.Kz*obj.z(:,i) - obj.torque_e(:,i) - obj.k_g*obj.sgn(:,i) + (obj.M_q + obj.B)*obj.qr_dot_dot(:,i) + obj.C_q_dot_q * obj.qr_dot(:,i) + obj.g_q(:,i);
+               
             end
+       
         end
-        
+
         function plotResults(obj)
-            % Plot results
+            % Plot_q_qdesired_left_leg
             figure;
-            subplot(3, 1, 1);
-            plot(obj.time, obj.q, 'b', 'LineWidth', 1.5); hold on;
-            plot(obj.time, obj.qd, 'r--', 'LineWidth', 1.5);
-            title('Joint Angle vs. Desired Trajectory');
+            subplot(2, 2, 1);
+            plot(obj.time, obj.q(1,:), 'b', 'LineWidth', 1.5); hold on;
+            plot(obj.time, obj.qd(1,:), 'r--', 'LineWidth', 1.5);
+            title('Joint Angle vs. Desired Trajectory for Left leg');
             xlabel('Time (s)');
             ylabel('Angle (rad)');
             legend('Actual', 'Desired');
             
-            subplot(3, 1, 2);
-            plot(obj.time, obj.u, 'k', 'LineWidth', 1.5);
-            title('Impedance Deviation (z)');
+
+            % Plot_q_qdesired_right_leg
+            subplot(2, 2, 2);
+            plot(obj.time, obj.q(2,:), 'b', 'LineWidth', 1.5); hold on;
+            plot(obj.time, obj.qd(2,:), 'r--', 'LineWidth', 1.5);
+            title('Joint Angle vs. Desired Trajectory for Right Leg');
+            xlabel('Time (s)');
+            ylabel('Angle (rad)');
+            legend('Actual', 'Desired');
+
+            % Plot u and t_head_e for left Leg
+            subplot(2, 2, 3);
+            plot(obj.time, obj.us(1,:), 'k', 'LineWidth', 1.5); hold on;
+            plot(obj.time, obj.torque_e(1,:), 'b', 'LineWidth', 1.5); 
+            title('Output control and Interaction Torque of Left Leg');
+            xlabel('Time (s)');
+            ylabel('Deviation (rad/s)')
+            legend('Control Output','Torque_e');
+
+            % Plot u and t_head_e for right Leg
+            subplot(2, 2, 4);
+            plot(obj.time, obj.us(2,:), 'k', 'LineWidth', 1.5); hold on;
+            plot(obj.time, obj.torque_e(2,:), 'b', 'LineWidth', 1.5); 
+            title('Output control and Interaction Torque of Right Leg');
             xlabel('Time (s)');
             ylabel('Deviation (rad/s)');
-            
-            subplot(3, 1, 3);
-            plot(obj.time, obj.anomaly_score, 'm', 'LineWidth', 1.5);
-            title('Anomaly Score');
-            xlabel('Time (s)');
-            ylabel('Anomaly Score');
-            
+            legend('Control Output','Torque_e');
+
             sgtitle('Variable Impedance Control Simulation');
         end
     end
 end
+
